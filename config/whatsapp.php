@@ -7,7 +7,7 @@ return [
     |--------------------------------------------------------------------------
     |
     | This option controls the default WhatsApp validator driver that will be used
-    | to validate phone numbers. Supported drivers: "business_api", "rapidapi"
+    | to validate phone numbers. Currently only "rapidapi" is supported.
     |
     */
     'driver' => env('WHATSAPP_DRIVER', 'rapidapi'),
@@ -18,6 +18,15 @@ return [
     |--------------------------------------------------------------------------
     |
     | Here you may configure the RapidAPI WhatsApp validator settings.
+    | Required:
+    |   - key: Your RapidAPI key
+    |   - host: The RapidAPI host
+    |   - endpoint: The API endpoint for single number validation
+    |   - bulk_endpoint: The API endpoint for bulk validation
+    |
+    | Optional:
+    |   - timeout: Request timeout in seconds (default: 30)
+    |   - retry_attempts: Number of retry attempts (default: 3)
     |
     */
     'rapidapi' => [

@@ -2,8 +2,29 @@
 
 namespace Simbiosis\WhatsAppNumberValidator;
 
-class RapidApiWhatsAppValidator extends BaseValidator
+class RapidApiWhatsAppValidator implements WhatsAppValidatorInterface
 {
+    /**
+     * The HTTP client.
+     *
+     * @var HttpClientInterface
+     */
+    protected HttpClientInterface $httpClient;
+
+    /**
+     * The phone number formatter.
+     *
+     * @var PhoneNumberFormatterInterface
+     */
+    protected PhoneNumberFormatterInterface $formatter;
+
+    /**
+     * The logger.
+     *
+     * @var Logger
+     */
+    protected Logger $logger;
+
     /**
      * The RapidAPI endpoint
      *
@@ -50,10 +71,19 @@ class RapidApiWhatsAppValidator extends BaseValidator
      * Create a new validator instance.
      *
      * @param array $config
+     * @param HttpClientInterface|null $httpClient
+     * @param PhoneNumberFormatterInterface|null $formatter
+     * @param Logger|null $logger
      */
-    public function __construct(array $config = [])
-    {
-        parent::__construct($config);
+    public function __construct(
+        array $config = [],
+        ?HttpClientInterface $httpClient = null,
+        ?PhoneNumberFormatterInterface $formatter = null,
+        ?Logger $logger = null
+    ) {
+        $this->httpClient = $httpClient ?? new HttpClient($config);
+        $this->formatter = $formatter ?? new PhoneNumberFormatter();
+        $this->logger = $logger ?? new Logger();
 
         $this->apiEndpoint = $config['endpoint'] ?? '';
         $this->bulkApiEndpoint = $config['bulk_endpoint'] ?? '';
@@ -69,21 +99,22 @@ class RapidApiWhatsAppValidator extends BaseValidator
     }
 
     /**
-     * Validate a phone number
+     * Validate if a phone number is a valid WhatsApp number
      *
-     * @param string $phoneNumber
-     * @return bool
-     * @throws \Exception
+     * @param string $phoneNumber The phone number to validate
+     * @return bool Whether the number is a valid WhatsApp number
+     * @throws \InvalidArgumentException For invalid phone number format
+     * @throws \Exception For API or connection errors
      */
     public function validate(string $phoneNumber): bool
     {
         try {
-            $formattedNumber = $this->formatNumber($phoneNumber);
+            $formattedNumber = $this->formatter->formatPhoneNumber($phoneNumber);
             return $this->performValidation($formattedNumber);
         } catch (\InvalidArgumentException $e) {
             throw $e;
         } catch (\Exception $e) {
-            $this->logError('Validation failed', [
+            $this->logger->error('Validation failed', [
                 'phone_number' => $phoneNumber,
                 'error' => $e->getMessage()
             ]);
@@ -94,24 +125,53 @@ class RapidApiWhatsAppValidator extends BaseValidator
     /**
      * Validate multiple phone numbers
      *
-     * @param array $phoneNumbers
-     * @return array
-     * @throws \Exception
+     * @param array $phoneNumbers Array of phone numbers to validate
+     * @return array Associative array with phone numbers as keys and validation results as values
+     * @throws \InvalidArgumentException For invalid phone number format
+     * @throws \Exception For API or connection errors
      */
     public function validateBulk(array $phoneNumbers): array
     {
         try {
-            $formattedNumbers = $this->formatNumbers($phoneNumbers);
+            $formattedNumbers = $this->formatter->formatPhoneNumbers($phoneNumbers);
+
+            if (!$this->supportsBulkValidation()) {
+                return $this->performSingleValidations($formattedNumbers);
+            }
+
             return $this->performBulkValidation($formattedNumbers);
         } catch (\InvalidArgumentException $e) {
             throw $e;
         } catch (\Exception $e) {
-            $this->logError('Bulk validation failed', [
+            $this->logger->error('Bulk validation failed', [
                 'phone_numbers' => $phoneNumbers,
                 'error' => $e->getMessage()
             ]);
             throw $e;
         }
+    }
+
+    /**
+     * Perform single validations for each number when bulk validation is not supported
+     *
+     * @param array $formattedNumbers
+     * @return array
+     */
+    protected function performSingleValidations(array $formattedNumbers): array
+    {
+        $results = [];
+        foreach ($formattedNumbers as $originalNumber => $formattedNumber) {
+            try {
+                $results[$originalNumber] = $this->performValidation($formattedNumber);
+            } catch (\Exception $e) {
+                $this->logger->error('Individual validation failed', [
+                    'phone_number' => $originalNumber,
+                    'error' => $e->getMessage()
+                ]);
+                $results[$originalNumber] = false;
+            }
+        }
+        return $results;
     }
 
     /**
@@ -133,12 +193,16 @@ class RapidApiWhatsAppValidator extends BaseValidator
      */
     protected function performValidation(string $formattedNumber): bool
     {
-        $response = $this->makeRequest($this->apiEndpoint, [
-            'phone_number' => $this->formatNumberForApi($formattedNumber)
+        $response = $this->httpClient->makeRequest($this->apiEndpoint, [
+            'phone_number' => $this->formatter->formatNumberForApi($formattedNumber)
         ], [
             'x-rapidapi-host: ' . $this->apiHost,
             'x-rapidapi-key: ' . $this->apiKey,
         ]);
+
+        if (!isset($response['status'])) {
+            throw new \Exception('Invalid API response: missing status field');
+        }
 
         return $response['status'] === 'valid';
     }
@@ -152,9 +216,9 @@ class RapidApiWhatsAppValidator extends BaseValidator
      */
     protected function performBulkValidation(array $formattedNumbers): array
     {
-        $response = $this->makeRequest($this->bulkApiEndpoint, [
+        $response = $this->httpClient->makeRequest($this->bulkApiEndpoint, [
             'phone_numbers' => array_map(
-                fn($number) => $this->formatNumberForApi($number),
+                fn($number) => $this->formatter->formatNumberForApi($number),
                 array_values($formattedNumbers)
             )
         ], [
@@ -162,29 +226,29 @@ class RapidApiWhatsAppValidator extends BaseValidator
             'x-rapidapi-key: ' . $this->apiKey,
         ]);
 
+        if (!is_array($response) || empty($response)) {
+            throw new \Exception('Invalid API response: expected array of results');
+        }
+
         $validationMap = [];
         foreach ($response as $result) {
+            if (!isset($result['phone_number']) || !isset($result['status'])) {
+                $this->logger->error('Invalid result format in bulk validation response', [
+                    'result' => $result
+                ]);
+                continue;
+            }
+
             $phoneNumber = $result['phone_number'];
             $validationMap[$phoneNumber] = $result['status'] === 'valid';
         }
 
         $finalResults = [];
         foreach ($formattedNumbers as $originalNumber => $formattedNumber) {
-            $finalResults[$originalNumber] = $validationMap[$this->formatNumberForApi($formattedNumber)] ?? false;
+            $apiFormat = $this->formatter->formatNumberForApi($formattedNumber);
+            $finalResults[$originalNumber] = $validationMap[$apiFormat] ?? false;
         }
 
         return $finalResults;
     }
-
-    /**
-     * Format the phone number for the API
-     *
-     * @param string $number
-     * @return string
-     */
-    protected function formatNumberForApi(string $number): string
-    {
-        return preg_replace('/[^0-9]/', '', $number);
-    }
-
 }
