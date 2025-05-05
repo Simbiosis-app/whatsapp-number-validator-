@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/12.1/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         displayDetailsOnTestsThatTriggerWarnings="true"
+         displayDetailsOnTestsThatTriggerErrors="true"
+         displayDetailsOnTestsThatTriggerNotices="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
+         failOnWarning="true"
+         failOnEmptyTestSuite="true">
+    <testsuites>
+        <testsuite name="Unit">
+            <directory>tests</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="WHATSAPP_DRIVER" value="rapidapi"/>
+        <env name="WHATSAPP_RAPIDAPI_KEY" value="test-key"/>
+        <env name="WHATSAPP_RAPIDAPI_HOST" value="test-host"/>
+        <env name="WHATSAPP_RAPIDAPI_ENDPOINT" value="https://test-endpoint.com"/>
+        <env name="WHATSAPP_RAPIDAPI_BULK_ENDPOINT" value="https://test-endpoint.com/bulk"/>
+    </php>
+</phpunit>
